@@ -7,8 +7,6 @@ Snowflake app shows quality scores, trends, and open issues, and lets you drill 
 Everything runs inside your Snowflake account. No data leaves Snowflake, there's no external service,
 and nothing needs installing from PyPI.
 
-![Data Quality Monitor overview](docs/overview.jpg)
-
 ---
 
 ## Contents
