@@ -423,7 +423,6 @@ Pull requests are welcome. Please add a test for any new rule type.
 
 ```
 ├── README.md
-├── LICENSE
 ├── requirements-dev.txt            local dev / tests only
 ├── docs/overview.jpg
 ├── sql/
@@ -444,7 +443,3 @@ Pull requests are welcome. Please add a test for any new rule type.
     ├── test_engine.py              rule compiler tests
     └── test_pages.py               page render smoke tests
 ```
-
-## License
-
-MIT. See [LICENSE](LICENSE).
