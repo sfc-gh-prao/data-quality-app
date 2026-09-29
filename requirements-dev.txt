@@ -1,0 +1,7 @@
+# Local development and tests only (the SiS container runtime already ships these).
+streamlit[snowflake]>=1.50
+snowflake-connector-python>=3.12
+altair>=5
+pandas>=2
+pyyaml
+pytest

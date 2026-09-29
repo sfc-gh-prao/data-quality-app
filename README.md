@@ -7,6 +7,8 @@ Snowflake app shows quality scores, trends, and open issues, and lets you drill 
 Everything runs inside your Snowflake account. No data leaves Snowflake, there's no external service,
 and nothing needs installing from PyPI.
 
+![Data Quality Monitor overview](docs/overview.jpg)
+
 ---
 
 ## Contents
@@ -87,9 +89,9 @@ severity-weighted share of passing checks: CRITICAL = 8, HIGH = 4, MEDIUM = 2, L
 | Requirement | Details |
 |---|---|
 | Snowflake account | Any edition. Streamlit in Snowflake must be available in your region. |
-| Role to install | `SYSADMIN` (databases and warehouse) and `SECURITYADMIN` (roles). `ACCOUNTADMIN` is needed only for `EXECUTE TASK` and the optional Git integration. |
+| Role to install | `SYSADMIN` (databases and warehouse) and `SECURITYADMIN` (roles). `ACCOUNTADMIN` is needed only to grant `EXECUTE TASK`. |
 | Compute pool | Needed for the container runtime. Most accounts have `SYSTEM_COMPUTE_POOL_CPU`. Check with `SHOW PARAMETERS LIKE 'DEFAULT_STREAMLIT_COMPUTE_POOL' IN ACCOUNT;` |
-| Deploy tool (pick one) | **Snowsight only** (Git option, nothing to install), **or** [Snowflake CLI](https://docs.snowflake.com/en/developer-guide/snowflake-cli/installation/installation) v3.14+ |
+| Deploy tool (pick one) | **Snowsight only** (nothing to install), **or** [Snowflake CLI](https://docs.snowflake.com/en/developer-guide/snowflake-cli/installation/installation) v3.14+ |
 
 > **Different names?** The scripts create `DQ_WH`, `DQ_FRAMEWORK.CORE`, `DQ_SAMPLE`, `DQ_ADMIN`, and
 > `DQ_VIEWER`. To use your own names, see [Customization](#customization) **before** running the scripts.
@@ -129,37 +131,99 @@ has something to show. Skip this step to start with an empty framework.
 
 ### Step 4: Deploy the app (pick one option)
 
-#### Option A: From GitHub, no local tools (Snowsight only)
+The whole app lives in the `app/` folder. Deploy that folder as-is and **keep its folder structure**.
+The app needs every one of these files:
 
-1. Fork or clone this repository into your GitHub org.
-2. Open `sql/05_deploy_app_from_git.sql` in a worksheet and edit the three lines marked `<-- EDIT`:
-   your GitHub org prefix, the repository URL, and the compute pool if yours isn't `SYSTEM_COMPUTE_POOL_CPU`.
-3. **Run All.** The script creates a Git repository object and builds the app from `app/` on `main`.
+```
+app/
+├── streamlit_app.py            ← main file
+├── lib/__init__.py, db.py, ui.py
+├── app_pages/__init__.py, overview.py, table_health.py, run_history.py, rules.py, native_dmfs.py
+├── .streamlit/config.toml      ← hidden folder; make sure your file browser shows it
+└── static/*.ttf                ← 6 font files
+```
 
-For a private repository, follow the commented `SECRET` / `GIT_CREDENTIALS` lines in the script.
+Don't add a `requirements.txt` or `pyproject.toml`. The app only uses packages that come with the
+container runtime, and a dependency file would force you to set up an External Access Integration.
 
-#### Option B: Snowflake CLI
+#### Option A: Snowsight upload (no tools to install)
+
+1. Download this repository: **Code » Download ZIP** on GitHub, then unzip it.
+2. In Snowsight, go to **Projects » Streamlit » + Streamlit App**:
+   - **Name:** `DATA_QUALITY_MONITOR`
+   - **App location:** `DQ_FRAMEWORK` / `CORE`
+   - **Runtime:** **Run on container**; pick a compute pool if you're asked
+   - **Query warehouse:** `DQ_WH`
+3. Click **Create**. A starter app opens in the editor.
+4. In the file panel, upload the files from `app/` using **+ » Upload file**. Create the `lib`,
+   `app_pages`, `.streamlit`, and `static` folders first, then upload each file into its matching folder.
+   Overwrite the starter `streamlit_app.py` with the one from this repo.
+5. Click **Run**.
+
+#### Option B: Stage + SQL
+
+Use this option to script the deploy or to upload the whole folder in one go.
+
+1. Create a stage:
+
+   ```sql
+   CREATE STAGE IF NOT EXISTS DQ_FRAMEWORK.CORE.DQ_APP_STAGE;
+   ```
+
+2. Upload the contents of `app/` to `@DQ_FRAMEWORK.CORE.DQ_APP_STAGE/app/`, keeping subfolders.
+   Use one of these:
+   - **Snowsight:** **Data » Databases » DQ_FRAMEWORK » CORE » Stages » DQ_APP_STAGE » + Files**.
+     Upload each folder's files, setting the matching path (`app`, `app/lib`, `app/app_pages`,
+     `app/.streamlit`, `app/static`).
+   - **Terminal:** from the repository root, using the Snowflake CLI:
+
+     ```bash
+     for f in $(cd app && find . -type f ! -name 'snowflake.yml' ! -name '*.example' ! -name '.DS_Store' ! -path '*__pycache__*'); do
+       snow stage copy "app/$f" "@DQ_FRAMEWORK.CORE.DQ_APP_STAGE/app/$(dirname "$f")/" --overwrite -c <connection>
+     done
+     ```
+
+3. Create the app from the stage:
+
+   ```sql
+   LIST @DQ_FRAMEWORK.CORE.DQ_APP_STAGE/app/;     -- expect 17 files
+
+   CREATE OR REPLACE STREAMLIT DQ_FRAMEWORK.CORE.DATA_QUALITY_MONITOR
+     FROM '@DQ_FRAMEWORK.CORE.DQ_APP_STAGE/app/'
+     MAIN_FILE = 'streamlit_app.py'
+     QUERY_WAREHOUSE = DQ_WH
+     RUNTIME_NAME = 'SYSTEM$ST_CONTAINER_RUNTIME_PY3_11'
+     -- COMPUTE_POOL = MY_POOL   -- omit to use DEFAULT_STREAMLIT_COMPUTE_POOL
+     TITLE = 'Data Quality Monitor';
+
+   ALTER STREAMLIT DQ_FRAMEWORK.CORE.DATA_QUALITY_MONITOR ADD LIVE VERSION FROM LAST;
+   ```
+
+   Files are copied when the app is created. To pick up changes later, re-upload the files and
+   re-run both statements.
+
+#### Option C: Snowflake CLI (`snow streamlit deploy`)
+
+`app/snowflake.yml` already lists every file, so the CLI deploy is a single command:
 
 ```bash
-git clone https://github.com/YOUR_ORG/snowflake-data-quality-monitor.git
-cd snowflake-data-quality-monitor/app
-
-snow connection list                 # choose the connection to deploy with
+cd app
 snow streamlit deploy --replace -c <connection>
 
 # If your warehouse or compute pool differ from the defaults in snowflake.yml:
 snow streamlit deploy --replace -c <connection> --env compute_pool=MY_POOL --env warehouse=MY_WH
 ```
 
-Then grant access: `GRANT USAGE ON STREAMLIT DQ_FRAMEWORK.CORE.DATA_QUALITY_MONITOR TO ROLE DQ_VIEWER;`
+#### After deploying (all options)
 
-#### Option C: Manual upload in Snowsight
+Give users access:
 
-1. **Projects » Streamlit » + Streamlit App.** Set the location to `DQ_FRAMEWORK.CORE`, choose
-   **Run on container**, and set the query warehouse to `DQ_WH`.
-2. In the editor, upload every file under `app/` and **keep the folder structure** (`lib/`, `app_pages/`,
-   `.streamlit/`, `static/`). Replace the starter `streamlit_app.py` with the one from this repo.
-3. Click **Run**, then grant `USAGE` as shown in Option B.
+```sql
+GRANT USAGE ON STREAMLIT DQ_FRAMEWORK.CORE.DATA_QUALITY_MONITOR TO ROLE DQ_VIEWER;
+GRANT USAGE ON STREAMLIT DQ_FRAMEWORK.CORE.DATA_QUALITY_MONITOR TO ROLE DQ_ADMIN;
+```
+
+Then open **Projects » Streamlit » Data Quality Monitor**.
 
 ### Step 5: Turn on the schedule
 
@@ -324,7 +388,7 @@ The project is built so that a customer can adopt it with minimal edits.
 ## Uninstall
 
 ```sql
--- Removes the app, framework, sample data, warehouse, roles, and Git integration
+-- Removes the app, framework, sample data, warehouse, and roles
 -- Review first; this is irreversible beyond Time Travel.
 -- sql/99_uninstall.sql
 ```
@@ -367,7 +431,6 @@ Pull requests are welcome. Please add a test for any new rule type.
 │   ├── 02_engine.sql               RUN_DQ_CHECKS procedure, daily task, optional alert
 │   ├── 03_sample_data.sql          OPTIONAL demo data + rules + 30-day history
 │   ├── 04_roles.sql                DQ_ADMIN / DQ_VIEWER
-│   ├── 05_deploy_app_from_git.sql  deploy the app from GitHub (no CLI)
 │   └── 99_uninstall.sql            remove everything
 ├── app/                            ← Streamlit in Snowflake app (deploy this folder)
 │   ├── streamlit_app.py            entry point + navigation
