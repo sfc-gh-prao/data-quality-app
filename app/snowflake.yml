@@ -1,0 +1,43 @@
+definition_version: 2
+
+# Override any value at deploy time, e.g.:
+#   snow streamlit deploy --replace --env compute_pool=MY_POOL --env warehouse=MY_WH
+env:
+  database: DQ_FRAMEWORK
+  schema: CORE
+  warehouse: DQ_WH
+  # Account default: SHOW PARAMETERS LIKE 'DEFAULT_STREAMLIT_COMPUTE_POOL' IN ACCOUNT;
+  compute_pool: SYSTEM_COMPUTE_POOL_CPU
+
+entities:
+  data_quality_monitor:
+    type: streamlit
+    identifier:
+      name: DATA_QUALITY_MONITOR
+      database: <% ctx.env.database %>
+      schema: <% ctx.env.schema %>
+    title: Data Quality Monitor
+    query_warehouse: <% ctx.env.warehouse %>
+    runtime_name: SYSTEM$ST_CONTAINER_RUNTIME_PY3_11
+    compute_pool: <% ctx.env.compute_pool %>
+    main_file: streamlit_app.py
+    # No pyproject.toml/requirements.txt on purpose: only pre-installed packages
+    # (streamlit, pandas, altair) are used, so no External Access Integration is needed.
+    artifacts:
+      - streamlit_app.py
+      - lib/__init__.py
+      - lib/db.py
+      - lib/ui.py
+      - app_pages/__init__.py
+      - app_pages/overview.py
+      - app_pages/table_health.py
+      - app_pages/run_history.py
+      - app_pages/rules.py
+      - app_pages/native_dmfs.py
+      - .streamlit/config.toml
+      - static/Inter-Regular.ttf
+      - static/Inter-Medium.ttf
+      - static/Inter-SemiBold.ttf
+      - static/Inter-Bold.ttf
+      - static/JetBrainsMono-Regular.ttf
+      - static/JetBrainsMono-Medium.ttf
