@@ -204,15 +204,16 @@ Use this option to script the deploy or to upload the whole folder in one go.
 
 #### Option C: Snowflake CLI (`snow streamlit deploy`)
 
-`app/snowflake.yml` already lists every file, so the CLI deploy is a single command:
+`app/snowflake.yml` already lists every file, so the CLI deploy is a single command. The manifest doesn't
+set a database or schema, so pass them on the command line so the app lands in `DQ_FRAMEWORK.CORE`:
 
 ```bash
 cd app
-snow streamlit deploy --replace -c <connection>
-
-# If your warehouse or compute pool differ from the defaults in snowflake.yml:
-snow streamlit deploy --replace -c <connection> --env compute_pool=MY_POOL --env warehouse=MY_WH
+snow streamlit deploy --replace -c <connection> --database DQ_FRAMEWORK --schema CORE
 ```
+
+The app is created as `DATA_QUALITY_MONITOR` (from the entity name in `snowflake.yml`). It uses the
+`DQ_WH` warehouse; if yours is different, change `query_warehouse` in `snowflake.yml`.
 
 #### After deploying (all options)
 
@@ -329,7 +330,7 @@ The project is built so that a customer can adopt it with minimal edits.
 
 | To change… | Where |
 |---|---|
-| **Database / schema name** | Find/replace `DQ_FRAMEWORK` (and `CORE`) across `sql/`, then tell the app where to look: set `DQ_FRAMEWORK_SCHEMA = "MY_DB.MY_SCHEMA"` as an environment variable, or edit the default in `app/lib/db.py`. Also update `app/snowflake.yml` `env:` |
+| **Database / schema name** | Find/replace `DQ_FRAMEWORK` (and `CORE`) across `sql/`, then tell the app where to look: set `DQ_FRAMEWORK_SCHEMA = "MY_DB.MY_SCHEMA"` as an environment variable, or edit the default in `app/lib/db.py`. If you deploy with the CLI, pass the new names with `--database` / `--schema` |
 | **Warehouse name** | Find/replace `DQ_WH` in `sql/` and `app/snowflake.yml` |
 | **Role names** | `sql/04_roles.sql` |
 | **App title** | `DQ_APP_TITLE` setting, or the default in `app/lib/db.py` |
