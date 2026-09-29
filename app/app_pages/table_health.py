@@ -43,9 +43,9 @@ with c[4]:
                 st.error(f"Run failed: {e}")
 
 st.write("")
-checks = db.query(f"SELECT * FROM {fq('V_LATEST_RESULTS')} WHERE TABLE_FQN = %s ORDER BY RULE_ID", (table,))
+checks = db.query(f"SELECT * FROM {fq('V_LATEST_RESULTS')} WHERE TABLE_FQN = ? ORDER BY RULE_ID", (table,))
 trend = db.query(
-    f"SELECT RUN_DATE, DQ_SCORE FROM {fq('V_DAILY_TABLE_SCORE')} WHERE TABLE_FQN = %s "
+    f"SELECT RUN_DATE, DQ_SCORE FROM {fq('V_DAILY_TABLE_SCORE')} WHERE TABLE_FQN = ? "
     "AND RUN_DATE >= DATEADD('day', -90, CURRENT_DATE()) ORDER BY RUN_DATE",
     (table,),
 )
@@ -89,7 +89,7 @@ if rows:
     rule = checks.iloc[rows[0]]
     hist = db.query(
         f"SELECT RUN_DATE, FAILED_PCT, THRESHOLD_PCT, STATUS, FAILED_ROWS FROM {fq('V_DAILY_RESULTS')} "
-        "WHERE RULE_ID = %s AND RUN_DATE >= DATEADD('day', -90, CURRENT_DATE()) ORDER BY RUN_DATE",
+        "WHERE RULE_ID = ? AND RUN_DATE >= DATEADD('day', -90, CURRENT_DATE()) ORDER BY RUN_DATE",
         (int(rule["RULE_ID"]),),
     )
     with st.container(border=True):

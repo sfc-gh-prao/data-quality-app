@@ -34,8 +34,7 @@ APP_TITLE = _setting("DQ_APP_TITLE", "Data Quality Monitor")
 @st.cache_resource(show_spinner=False)
 def get_conn():
     return st.connection(
-        "snowflake",
-        connection_name=os.getenv("SNOWFLAKE_DEFAULT_CONNECTION_NAME") or "default",
+        "snowflake", ttl=os.getenv("SNOWFLAKE_CONNECTION_TTL")
     )
 
 
@@ -57,7 +56,7 @@ def _run(sql: str, params=None) -> pd.DataFrame:
 
 @st.cache_data(ttl=300, show_spinner=False)
 def query(sql: str, params: tuple | None = None) -> pd.DataFrame:
-    """Cached read. Use %s placeholders for params — never format values into SQL."""
+    """Cached read. Use ? (qmark) placeholders for params — never format values into SQL."""
     return _run(sql, params)
 
 
@@ -105,6 +104,6 @@ def require_framework():
 
 
 def run_checks(table_fqn: str | None = None, rule_id: int | None = None) -> dict:
-    df = execute(f"CALL {fq('RUN_DQ_CHECKS')}(%s, %s, 'MANUAL')", (table_fqn, rule_id))
+    df = execute(f"CALL {fq('RUN_DQ_CHECKS')}(?, ?, 'MANUAL')", (table_fqn, rule_id))
     val = df.iloc[0, 0] if not df.empty else "{}"
     return json.loads(val) if isinstance(val, str) else dict(val)

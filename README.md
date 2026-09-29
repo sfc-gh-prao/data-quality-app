@@ -131,38 +131,45 @@ has something to show. Skip this step to start with an empty framework.
 
 ### Step 4: Deploy the app (pick one option)
 
-The whole app lives in the `app/` folder. Deploy that folder as-is and **keep its folder structure**.
-The app needs every one of these files:
+The whole app lives in the `app/` folder. Deploy that folder as-is and **keep its folder structure**:
 
 ```
 app/
 ├── streamlit_app.py            ← main file
+├── pyproject.toml              ← required by Workspaces; lists only streamlit
+├── snowflake.yml               ← deployment settings (warehouse, runtime, compute pool)
 ├── lib/__init__.py, db.py, ui.py
 ├── app_pages/__init__.py, overview.py, table_health.py, run_history.py, rules.py, native_dmfs.py
 ├── .streamlit/config.toml      ← hidden folder; make sure your file browser shows it
 └── static/*.ttf                ← 6 font files
 ```
 
-Don't add a `requirements.txt` or `pyproject.toml`. The app only uses packages that come with the
-container runtime, and a dependency file would force you to set up an External Access Integration.
+The app runs on a **compute pool** (container runtime, Python 3.11). It only uses packages that come
+pre-installed in that runtime, so **no External Access Integration is needed**. `pyproject.toml` lists
+only `streamlit`; without PyPI access, the runtime uses its built-in Streamlit version.
 
-#### Option A: Snowsight upload (no tools to install)
+#### Option A: Snowsight Workspaces (recommended, nothing to install)
 
 1. Download this repository: **Code » Download ZIP** on GitHub, then unzip it.
-2. In Snowsight, go to **Projects » Streamlit » + Streamlit App**:
-   - **Name:** `DATA_QUALITY_MONITOR`
-   - **App location:** `DQ_FRAMEWORK` / `CORE`
-   - **Runtime:** **Run on container**; pick a compute pool if you're asked
-   - **Query warehouse:** `DQ_WH`
-3. Click **Create**. A starter app opens in the editor.
-4. In the file panel, upload the files from `app/` using **+ » Upload file**. Create the `lib`,
-   `app_pages`, `.streamlit`, and `static` folders first, then upload each file into its matching folder.
-   Overwrite the starter `streamlit_app.py` with the one from this repo.
-5. Click **Run**.
+2. In Snowsight, open **Projects » Workspaces** and create or open a workspace
+   (for example "Data Quality App").
+3. Upload the `app/` folder into the workspace, keeping its subfolders (`lib`, `app_pages`,
+   `.streamlit`, `static`). Drag the folder into the file panel, or create each folder and upload
+   its files with **+ » Upload files**.
+4. Open `app/streamlit_app.py` and click **Run**. The app starts as a private preview on a compute
+   pool. Check that the Overview page loads with data.
+5. Click **Deploy** in the workspace's project pane and fill in the dialog:
+   - **Location:** `DQ_FRAMEWORK` / `CORE`
+   - **Execution:** your compute pool (e.g. `SYSTEM_COMPUTE_POOL_CPU`) and query warehouse `DQ_WH`
+   - **Sharing:** add `DQ_VIEWER` and `DQ_ADMIN` (optional; you can grant later)
+6. Click **Deploy**. To publish later changes, edit in the workspace and click **Deploy** again.
 
-#### Option B: Stage + SQL
+> **Tip:** The query warehouse must be usable by the app's role on its own; secondary roles aren't
+> used. If `DQ_WH` doesn't appear in the list, grant `USAGE` on it to the role that owns the app.
 
-Use this option to script the deploy or to upload the whole folder in one go.
+#### Option B: SQL from a stage
+
+Use this option to script the deployment.
 
 1. Create a stage:
 
@@ -183,17 +190,17 @@ Use this option to script the deploy or to upload the whole folder in one go.
      done
      ```
 
-3. Create the app from the stage:
+3. Create the app on the compute pool:
 
    ```sql
-   LIST @DQ_FRAMEWORK.CORE.DQ_APP_STAGE/app/;     -- expect 17 files
+   LIST @DQ_FRAMEWORK.CORE.DQ_APP_STAGE/app/;     -- expect 18 files
 
    CREATE OR REPLACE STREAMLIT DQ_FRAMEWORK.CORE.DATA_QUALITY_MONITOR
      FROM '@DQ_FRAMEWORK.CORE.DQ_APP_STAGE/app/'
      MAIN_FILE = 'streamlit_app.py'
      QUERY_WAREHOUSE = DQ_WH
      RUNTIME_NAME = 'SYSTEM$ST_CONTAINER_RUNTIME_PY3_11'
-     -- COMPUTE_POOL = MY_POOL   -- omit to use DEFAULT_STREAMLIT_COMPUTE_POOL
+     COMPUTE_POOL = SYSTEM_COMPUTE_POOL_CPU      -- your pool; see note below
      TITLE = 'Data Quality Monitor';
 
    ALTER STREAMLIT DQ_FRAMEWORK.CORE.DATA_QUALITY_MONITOR ADD LIVE VERSION FROM LAST;
@@ -202,29 +209,37 @@ Use this option to script the deploy or to upload the whole folder in one go.
    Files are copied when the app is created. To pick up changes later, re-upload the files and
    re-run both statements.
 
+   If you already uploaded the app to a workspace (Option A), you can deploy it with SQL straight from
+   the workspace instead of a stage:
+   `FROM 'snow://workspace/USER$<YOUR_USER>.PUBLIC."Data Quality App"/versions/live/app'`.
+
 #### Option C: Snowflake CLI (`snow streamlit deploy`)
 
-`app/snowflake.yml` already lists every file, so the CLI deploy is a single command. The manifest doesn't
-set a database or schema, so pass them on the command line so the app lands in `DQ_FRAMEWORK.CORE`:
+`app/snowflake.yml` already lists every file and sets the container runtime, compute pool, and
+warehouse. The manifest doesn't set a database or schema, so pass them on the command line:
 
 ```bash
 cd app
 snow streamlit deploy --replace -c <connection> --database DQ_FRAMEWORK --schema CORE
 ```
 
-The app is created as `DATA_QUALITY_MONITOR` (from the entity name in `snowflake.yml`). It uses the
-`DQ_WH` warehouse; if yours is different, change `query_warehouse` in `snowflake.yml`.
+The app is created as `DATA_QUALITY_MONITOR` (from the entity name in `snowflake.yml`). If your
+warehouse or compute pool are different, edit `query_warehouse` / `compute_pool` in `snowflake.yml`.
+
+> **Which compute pool?** Run `SHOW PARAMETERS LIKE 'DEFAULT_STREAMLIT_COMPUTE_POOL' IN ACCOUNT;`.
+> Most accounts use `SYSTEM_COMPUTE_POOL_CPU`. The deploying role needs `USAGE` on the pool.
 
 #### After deploying (all options)
 
-Give users access:
+Give users access (skip if you added roles in the Workspaces deploy dialog):
 
 ```sql
 GRANT USAGE ON STREAMLIT DQ_FRAMEWORK.CORE.DATA_QUALITY_MONITOR TO ROLE DQ_VIEWER;
 GRANT USAGE ON STREAMLIT DQ_FRAMEWORK.CORE.DATA_QUALITY_MONITOR TO ROLE DQ_ADMIN;
 ```
 
-Then open **Projects » Streamlit » Data Quality Monitor**.
+Then open **Projects » Streamlit » Data Quality Monitor**. You should see the Overview page with
+KPIs, trends, and open issues. With the sample data that's 4 tables and 30 checks.
 
 ### Step 5: Turn on the schedule
 
@@ -380,7 +395,9 @@ The project is built so that a customer can adopt it with minimal edits.
 | **Save / Run buttons fail** for some users | Expected for `DQ_VIEWER`, which is read-only. Grant `DQ_ADMIN` to users who manage rules. |
 | **Task never runs** | Run `ALTER TASK ... RESUME`, and make sure the owner role has `EXECUTE TASK` (`04_roles.sql`). Check `SELECT * FROM TABLE(INFORMATION_SCHEMA.TASK_HISTORY()) ORDER BY SCHEDULED_TIME DESC;` |
 | Deploy error mentioning **compute pool** | Use the pool from `SHOW PARAMETERS LIKE 'DEFAULT_STREAMLIT_COMPUTE_POOL' IN ACCOUNT;`, and grant `USAGE` on it to the deploying role. |
-| Deploy error: **Failed to retrieve packages / EAI** | A `requirements.txt` or `pyproject.toml` was added to `app/`. Remove it, or attach a PyPI External Access Integration. |
+| **Installing dependencies failed because the pyproject.toml file does not exist** | Workspaces requires `app/pyproject.toml`. Upload the one from this repo; it lists only `streamlit` and needs no External Access Integration. |
+| **Failed to retrieve packages / EAI** | Extra packages were added to `pyproject.toml`. Remove them (the app only needs `streamlit`), or attach a PyPI External Access Integration. |
+| **got multiple values for keyword argument 'connection_name'** | You are running an old copy of `app/lib/db.py`. Replace the `app/` folder with the current version from this repo. |
 | Native DMFs page says **not accessible** | Grant the `SNOWFLAKE.DATA_QUALITY_MONITORING_VIEWER` application role, or ignore the page if you don't use DMFs. |
 | App shows **stale numbers** | Results are cached for 5 minutes. Click **Refresh data** in the sidebar. |
 
@@ -406,6 +423,9 @@ pip install -r requirements-dev.txt
 
 # Unit tests for the rule engine + render tests for every page (no Snowflake connection needed)
 python -m pytest tests/
+
+# Live check: render every page against your account's DQ_FRAMEWORK data
+SNOWFLAKE_DEFAULT_CONNECTION_NAME=<your_connection> python tests/live_check.py
 
 # Run the app locally against your account (uses ~/.snowflake/connections.toml)
 cd app

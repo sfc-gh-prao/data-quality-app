@@ -34,7 +34,7 @@ RULE_COLS = ["RULE_NAME", "DESCRIPTION", "DATABASE_NAME", "SCHEMA_NAME", "TABLE_
              "RULE_PARAMS", "ROW_FILTER", "THRESHOLD_PCT", "SEVERITY", "DIMENSION", "OWNER"]
 INSERT_SQL = (
     f"INSERT INTO {fq('DQ_RULES')} ({', '.join(RULE_COLS)}) "
-    "SELECT %s, %s, %s, %s, %s, %s, %s, PARSE_JSON(%s), %s, %s, %s, %s, %s"
+    "SELECT ?, ?, ?, ?, ?, ?, ?, PARSE_JSON(?), ?, ?, ?, ?, ?"
 )
 
 rules = db.query(
@@ -100,8 +100,8 @@ with tab_cat:
     b = st.columns([1, 1, 1, 3])
     if b[0].button(f"Save ({len(changed)})", icon=":material/save:", type="primary", disabled=changed.empty):
         n = db.execute_many(
-            f"UPDATE {fq('DQ_RULES')} SET IS_ACTIVE = %s, THRESHOLD_PCT = %s, SEVERITY = %s, OWNER = %s, "
-            "UPDATED_AT = CURRENT_TIMESTAMP() WHERE RULE_ID = %s",
+            f"UPDATE {fq('DQ_RULES')} SET IS_ACTIVE = ?, THRESHOLD_PCT = ?, SEVERITY = ?, OWNER = ?, "
+            "UPDATED_AT = CURRENT_TIMESTAMP() WHERE RULE_ID = ?",
             [(bool(r.IS_ACTIVE), float(r.THRESHOLD_PCT or 0), r.SEVERITY, r.OWNER, int(rid)) for rid, r in changed.iterrows()],
         )
         st.toast(f"Updated {n} rule(s)", icon=":material/check:")
@@ -119,7 +119,7 @@ with tab_cat:
         st.write(f"Delete rule **#{rule_id} — {rules.set_index('RULE_ID').loc[rule_id, 'RULE_NAME']}**?")
         st.caption("Historical results are kept in DQ_RESULTS. Tip: deactivating a rule is usually better.")
         if st.button("Delete", type="primary"):
-            db.execute(f"DELETE FROM {fq('DQ_RULES')} WHERE RULE_ID = %s", (rule_id,))
+            db.execute(f"DELETE FROM {fq('DQ_RULES')} WHERE RULE_ID = ?", (rule_id,))
             st.rerun()
 
     if b[2].button("Delete", icon=":material/delete:", disabled=pick is None):
@@ -140,11 +140,11 @@ with tab_new:
             schemas = db.query(f"SELECT SCHEMA_NAME FROM {info}.SCHEMATA WHERE SCHEMA_NAME <> 'INFORMATION_SCHEMA' ORDER BY 1")
             schema = st.selectbox("Schema", schemas["SCHEMA_NAME"].tolist(), index=None, placeholder="Select schema")
             if schema:
-                tbls = db.query(f"SELECT TABLE_NAME FROM {info}.TABLES WHERE TABLE_SCHEMA = %s ORDER BY 1", (schema,))
+                tbls = db.query(f"SELECT TABLE_NAME FROM {info}.TABLES WHERE TABLE_SCHEMA = ? ORDER BY 1", (schema,))
                 table = st.selectbox("Table / view", tbls["TABLE_NAME"].tolist(), index=None, placeholder="Select table")
                 if table:
                     columns = db.query(
-                        f"SELECT COLUMN_NAME, DATA_TYPE FROM {info}.COLUMNS WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s "
+                        f"SELECT COLUMN_NAME, DATA_TYPE FROM {info}.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? "
                         "ORDER BY ORDINAL_POSITION", (schema, table))
 
         rule_type = st.selectbox("Rule type", list(RULE_TYPES), format_func=lambda t: f"{t} — {RULE_TYPES[t][1]}")
@@ -214,7 +214,7 @@ with tab_new:
                                     json.dumps(params), row_filter or None, float(threshold), severity, dimension, owner or None))
             st.success(f"Rule **{name}** created.")
             if run_now:
-                new_id = db.execute(f"SELECT MAX(RULE_ID) FROM {fq('DQ_RULES')} WHERE RULE_NAME = %s AND CREATED_BY = CURRENT_USER()",
+                new_id = db.execute(f"SELECT MAX(RULE_ID) FROM {fq('DQ_RULES')} WHERE RULE_NAME = ? AND CREATED_BY = CURRENT_USER()",
                                     (name,)).iloc[0, 0]
                 with st.spinner("Running..."):
                     r = db.run_checks(rule_id=int(new_id))

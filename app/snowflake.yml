@@ -1,3 +1,4 @@
+# created-by: streamlit-in-workspaces; skill-version=1.0.0
 definition_version: 2
 
 entities:
@@ -5,10 +6,13 @@ entities:
     type: streamlit
     title: Data Quality Monitor
     query_warehouse: DQ_WH
+    runtime_name: SYSTEM$ST_CONTAINER_RUNTIME_PY3_11
+    compute_pool: SYSTEM_COMPUTE_POOL_CPU
     main_file: streamlit_app.py
-    # No pyproject.toml/requirements.txt on purpose: only pre-installed packages
-    # (streamlit, pandas, altair) are used, so no External Access Integration is needed.
+    # pyproject.toml is required by the Workspaces runner. It only lists streamlit; without
+    # an External Access Integration the runtime falls back to its pre-installed Streamlit.
     artifacts:
+      - pyproject.toml
       - streamlit_app.py
       - lib/__init__.py
       - lib/db.py

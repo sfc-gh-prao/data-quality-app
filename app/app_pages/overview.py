@@ -19,7 +19,7 @@ trend = db.query(
                ROUND(100 * SUM(IFF(STATUS = 'PASS', WEIGHT, 0)) / NULLIF(SUM(WEIGHT), 0), 1) AS DQ_SCORE,
                COUNT(*) AS CHECKS, COUNT_IF(STATUS <> 'PASS') AS ISSUES
         FROM {fq('V_DAILY_RESULTS')}
-        WHERE RUN_DATE >= DATEADD('day', -%s, CURRENT_DATE())
+        WHERE RUN_DATE >= DATEADD('day', -?, CURRENT_DATE())
         GROUP BY RUN_DATE ORDER BY RUN_DATE""",
     (days,),
 )
@@ -108,7 +108,7 @@ with right, st.container(border=True):
 # ---- Heatmap -----------------------------------------------------------------
 heat = db.query(
     f"SELECT RUN_DATE, TABLE_FQN, DQ_SCORE, CHECKS, FAILED FROM {fq('V_DAILY_TABLE_SCORE')} "
-    "WHERE RUN_DATE >= DATEADD('day', -%s, CURRENT_DATE())",
+    "WHERE RUN_DATE >= DATEADD('day', -?, CURRENT_DATE())",
     (days,),
 )
 if not heat.empty:

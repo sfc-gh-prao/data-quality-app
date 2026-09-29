@@ -18,10 +18,10 @@ sevs = f[3].multiselect("Severity", ui.SEVERITY_ORDER, placeholder="All")
 trig = f[4].multiselect("Triggered by", ["SCHEDULE", "MANUAL", "BACKFILL"], placeholder="All")
 
 # Build filters with bind parameters only.
-where, params = ["RUN_TS >= DATEADD('day', -%s, CURRENT_TIMESTAMP())"], [days]
+where, params = ["RUN_TS >= DATEADD('day', -?, CURRENT_TIMESTAMP())"], [days]
 for col, vals in (("TABLE_FQN", tables), ("STATUS", statuses), ("SEVERITY", sevs), ("TRIGGERED_BY", trig)):
     if vals:
-        where.append(f"{col} IN ({', '.join(['%s'] * len(vals))})")
+        where.append(f"{col} IN ({', '.join(['?'] * len(vals))})")
         params.extend(vals)
 clause = " AND ".join(where)
 
