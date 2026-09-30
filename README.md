@@ -41,7 +41,8 @@ and nothing needs installing from PyPI.
 | **Root-cause drill-down** | Up to 100 failing rows, plus the exact SQL behind every result |
 | **Rule builder UI** | Point-and-click database, table, and column pickers, with regex presets |
 | **Import / export** | Keep rules in version control as CSV and move them between accounts |
-| **Scheduling and alerts** | Daily Snowflake Task, plus an optional email alert on CRITICAL or HIGH failures |
+| **Schema Explorer** | Profile one table or a whole schema, get rule suggestions ranked by confidence, preview the results, and apply in bulk |
+| **Scheduling and alerts** | Daily Snowflake Task, plus optional alert policies (email or webhook) that fire right after each run, with severity, scope, and "new failures only" filters |
 | **Native DMF view** | Shows Snowflake Data Metric Function results next to the rule engine |
 | **Sample dataset** | About 1.8M rows of retail data with defects injected on purpose, 30 rules, and 30 days of history for demos and testing |
 
@@ -52,8 +53,10 @@ and nothing needs installing from PyPI.
 | **Overview** | Headline KPIs, score trend, status mix, score by dimension, table leaderboard, daily heatmap, open issues |
 | **Table Health** | One table in depth: per-check status, failure-rate history vs. threshold, failing-row sample, check SQL, **Run checks** button |
 | **Run History** | Every execution, filterable by window, table, status, severity, and trigger; CSV download |
+| **Schema Explorer** | Browse a schema by rule coverage and DQ score, profile columns, review suggested rules (high / medium / low confidence), preview pass/fail before saving, apply in bulk with a shared owner and row filter |
 | **Rules** | Edit the catalog (activate, threshold, severity, owner), build new rules, import/export CSV |
 | **Native DMFs** | Latest values and trends from `SNOWFLAKE.LOCAL.DATA_QUALITY_MONITORING_RESULTS` |
+| **Alerting** | Channel and schedule status, alert policies (create, edit, send a test for one policy), notification history with message previews. Requires `sql/05_alerting.sql` |
 
 ---
 
@@ -138,8 +141,8 @@ app/
 ├── streamlit_app.py            ← main file
 ├── pyproject.toml              ← required by Workspaces; lists only streamlit
 ├── snowflake.yml               ← deployment settings (warehouse, runtime, compute pool)
-├── lib/__init__.py, db.py, ui.py
-├── app_pages/__init__.py, overview.py, table_health.py, run_history.py, rules.py, native_dmfs.py
+├── lib/__init__.py, db.py, ui.py, rules_sql.py
+├── app_pages/__init__.py, overview.py, table_health.py, run_history.py, schema_explorer.py, rules.py, native_dmfs.py, alerting.py
 ├── .streamlit/config.toml      ← hidden folder; make sure your file browser shows it
 └── static/*.ttf                ← 6 font files
 ```
@@ -250,8 +253,36 @@ ALTER TASK DQ_FRAMEWORK.CORE.DQ_DAILY_RUN RESUME;     -- runs daily at 06:00 UTC
 To change the timing: `ALTER TASK DQ_FRAMEWORK.CORE.DQ_DAILY_RUN SET SCHEDULE = 'USING CRON 0 */4 * * * UTC';`
 (suspend the task first).
 
-**Optional email alerts:** uncomment the `DQ_FAILURE_ALERT` block at the bottom of `sql/02_engine.sql`.
-It needs an [email notification integration](https://docs.snowflake.com/en/user-guide/notifications/email-notifications).
+If you install alerting (Step 6), use `SELECT SYSTEM$TASK_DEPENDENTS_ENABLE('DQ_FRAMEWORK.CORE.DQ_DAILY_RUN');`
+instead, so the notify task is resumed too. The **Alerting** page has Turn on / Turn off / Run now buttons for this.
+
+### Step 6: Alerts (optional)
+
+`sql/05_alerting.sql` adds alert policies, a notification history, and a `DQ_NOTIFY` task that runs
+**after** `DQ_DAILY_RUN`, so notifications always reflect the run that just finished. **Run it after
+`04_roles.sql`**: tasks in one graph must share an owner, and the script creates `DQ_NOTIFY` as
+`DQ_ADMIN`. If you skipped `04_roles.sql`, change `USE ROLE DQ_ADMIN` in the script to the role that owns
+`DQ_DAILY_RUN`.
+
+Then, as `ACCOUNTADMIN`, create a channel (templates are at the bottom of the script and in the app's
+Status panel):
+
+```sql
+CREATE NOTIFICATION INTEGRATION DQ_EMAIL_INTEGRATION
+  TYPE = EMAIL ENABLED = TRUE ALLOWED_RECIPIENTS = ('dq-team@example.com');  -- verified users only
+GRANT USAGE ON INTEGRATION DQ_EMAIL_INTEGRATION TO ROLE DQ_ADMIN;           -- task owner
+GRANT USAGE ON INTEGRATION DQ_EMAIL_INTEGRATION TO ROLE SYSADMIN;           -- app owner, for "Send test"
+```
+
+Webhooks (Slack, Teams, PagerDuty) use a `TYPE = WEBHOOK` notification integration; a policy's recipient
+is the integration name. Finally, open **Alerting**:
+
+1. **Settings** → paste your app URL so notifications include an "Open Data Quality Monitor" link.
+2. **New policy** → pick severities, an optional scope (tables or `DB.SCHEMA.*`), and a notify mode
+   (every failure, or only checks that newly went PASS → FAIL).
+3. **Policies** → select the policy → **Send test**. Tests use the latest results and prefix the subject with `[TEST]`.
+
+Or from SQL: `CALL DQ_FRAMEWORK.CORE.NOTIFY_DQ_FAILURES(<ALERT_ID>, TRUE);`
 
 ---
 
@@ -353,7 +384,9 @@ The project is built so that a customer can adopt it with minimal edits.
 | **Score weights** | `V_SEVERITY_WEIGHTS` view in `sql/01_setup.sql` |
 | **Healthy / warning score bands** | `score_color()` in `app/lib/ui.py` (defaults: ≥95 green, ≥80 amber) |
 | **Schedule** | `SCHEDULE` on `DQ_DAILY_RUN` in `sql/02_engine.sql` |
-| **Add a rule type** | Add a branch to `build_sql()` in `sql/02_engine.sql`, a test in `tests/test_engine.py`, and a UI option in `app/app_pages/rules.py` (`RULE_TYPES`) |
+| **Add a rule type** | Add a branch to `build_sql()` in `sql/02_engine.sql` **and** its mirror in `app/lib/rules_sql.py`, a test in `tests/test_engine.py`, and a UI option in `app/app_pages/rules.py` (`RULE_TYPES`) |
+| **Suggestion heuristics** | Name hints (`REQUIRED_HINTS`, `NON_NEGATIVE_HINTS`, `FRESHNESS_HINTS`) and limits at the top of `app/app_pages/schema_explorer.py` |
+| **Alert lookback / email look** | `RECENT_HOURS` and the HTML builder in `NOTIFY_DQ_FAILURES` (`sql/05_alerting.sql`) |
 | **Add a page** | Create `app/app_pages/my_page.py`, register it in `app/streamlit_app.py`, and add it to `artifacts` in `app/snowflake.yml` |
 
 ---
@@ -368,6 +401,18 @@ The project is built so that a customer can adopt it with minimal edits.
   `CUSTOM_SQL` accept raw SQL predicates by design, so restrict write access on `DQ_RULES` to trusted
   admins. `04_roles.sql` does this: viewers can read everything but can't edit rules or run checks.
 - **Parameterized queries.** The app passes every user-supplied value as a bind parameter.
+- **Admin-only actions in the app.** The app runs with its **owner's** rights, so table grants alone don't
+  stop a viewer from writing through it. At session start the app checks, via a restricted caller's-rights
+  connection, whether the viewer's **default role** includes `DQ_ADMIN` (setting `DQ_ADMIN_ROLE`). Non-admins
+  get a read-only app: no rule edits, runs, alert changes, Schema Explorer, or failing-row samples, and the
+  data layer (`db.execute`) refuses writes. If the check can't run, the app fails closed to read-only.
+  The check uses the user's default role **plus their default secondary roles**, not the role selected in
+  Snowsight. So a user with `DEFAULT_SECONDARY_ROLES = ('ALL')` who holds `DQ_ADMIN` anywhere is an admin.
+  Admins can switch on **Preview as read-only viewer** in the sidebar to see the non-admin experience.
+- **Sensitive columns.** Schema Explorer never reads values (min/max/samples/value lists) for columns with a
+  masking policy, a `SEMANTIC_CATEGORY`/`PRIVACY_CATEGORY` classification tag, or a PII-like name
+  (`SENSITIVE_HINTS`); it profiles only null and distinct counts. Masking policies are evaluated for the
+  app's owner role, so this guard matters even for admins.
 - **No external access.** The app uses only packages bundled with the container runtime. No External
   Access Integration and no outbound network calls are needed.
 
@@ -398,6 +443,9 @@ The project is built so that a customer can adopt it with minimal edits.
 | **Installing dependencies failed because the pyproject.toml file does not exist** | Workspaces requires `app/pyproject.toml`. Upload the one from this repo; it lists only `streamlit` and needs no External Access Integration. |
 | **Failed to retrieve packages / EAI** | Extra packages were added to `pyproject.toml`. Remove them (the app only needs `streamlit`), or attach a PyPI External Access Integration. |
 | **got multiple values for keyword argument 'connection_name'** | You are running an old copy of `app/lib/db.py`. Replace the `app/` folder with the current version from this repo. |
+| **module 'lib.db' has no attribute ...** after redeploying | The running app still has the old version of the file loaded. Reboot the app (⋮ menu in the app, or close and reopen it) so it reloads the new files. |
+| Alert **Send test** fails with an integration error | Grant `USAGE` on the notification integration to the app's owner role and to `DQ_ADMIN`. Email recipients must be verified users listed in `ALLOWED_RECIPIENTS`. |
+| Scheduled alerts never arrive | Check both tasks on the **Alerting** page (Recent task runs). Resume with `SYSTEM$TASK_DEPENDENTS_ENABLE`. Scheduled runs only consider results from the last 6 hours, and "new failures only" policies log `SKIPPED` when nothing changed. |
 | Native DMFs page says **not accessible** | Grant the `SNOWFLAKE.DATA_QUALITY_MONITORING_VIEWER` application role, or ignore the page if you don't use DMFs. |
 | App shows **stale numbers** | Results are cached for 5 minutes. Click **Refresh data** in the sidebar. |
 
@@ -448,14 +496,16 @@ Pull requests are welcome. Please add a test for any new rule type.
 ├── docs/overview.jpg
 ├── sql/
 │   ├── 01_setup.sql                warehouse, database, tables, scoring views
-│   ├── 02_engine.sql               RUN_DQ_CHECKS procedure, daily task, optional alert
+│   ├── 02_engine.sql               RUN_DQ_CHECKS procedure, daily task
 │   ├── 03_sample_data.sql          OPTIONAL demo data + rules + 30-day history
 │   ├── 04_roles.sql                DQ_ADMIN / DQ_VIEWER
+│   ├── 05_alerting.sql             OPTIONAL alert policies, history, NOTIFY_DQ_FAILURES, DQ_NOTIFY task
 │   └── 99_uninstall.sql            remove everything
 ├── app/                            ← Streamlit in Snowflake app (deploy this folder)
 │   ├── streamlit_app.py            entry point + navigation
-│   ├── app_pages/                  overview, table_health, run_history, rules, native_dmfs
+│   ├── app_pages/                  overview, table_health, run_history, schema_explorer, rules, native_dmfs, alerting
 │   ├── lib/db.py                   connection, parameterized queries, framework location
+│   ├── lib/rules_sql.py            rule compiler mirrored from the engine (used for previews)
 │   ├── lib/ui.py                   theme, KPI cards, charts
 │   ├── .streamlit/config.toml      theme
 │   ├── static/                     bundled fonts (SiS can't load remote fonts)

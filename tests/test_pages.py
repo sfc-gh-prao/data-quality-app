@@ -36,6 +36,30 @@ def _results():
 
 
 def fake_query(sql, params=None):
+    now = datetime.now(timezone.utc)
+    if "GROUP BY STATUS" in sql:
+        return pd.DataFrame({"STATUS": ["SENT", "SKIPPED"], "N": [1, 1], "AT": [now, now]})
+    if "DQ_ALERT_CONFIG" in sql:
+        return pd.DataFrame({"ALERT_ID": [1], "IS_ENABLED": [True], "ALERT_NAME": ["Email - CRITICAL"],
+                             "CHANNEL_TYPE": ["EMAIL"], "RECIPIENTS": ["dq@example.com"], "SEVERITY_FILTER": ["CRITICAL"],
+                             "SCOPE_TABLES": [None], "NOTIFY_MODE": ["ALL_FAILURES"], "MIN_SCORE": [None]})
+    if "DQ_ALERT_HISTORY" in sql:
+        return pd.DataFrame({"HISTORY_ID": [1], "SENT_AT": [now], "ALERT_ID": [1], "ALERT_NAME": ["Email - CRITICAL"],
+                             "CHANNEL_TYPE": ["EMAIL"], "STATUS": ["SENT"], "FAILURES_COUNT": [2],
+                             "TABLES_AFFECTED": ["DB.S.ORDERS"], "MESSAGE_PREVIEW": ["msg"], "ERROR_MESSAGE": [None]})
+    if "DQ_SETTINGS" in sql:
+        return pd.DataFrame({"SETTING_KEY": ["APP_URL"], "SETTING_VALUE": [""]})
+    if "SHOW NOTIFICATION INTEGRATIONS" in sql:
+        return pd.DataFrame({"NAME": ["DQ_EMAIL_INTEGRATION"], "TYPE": ["EMAIL"]})
+    if "DESCRIBE INTEGRATION" in sql:
+        return pd.DataFrame({"PROPERTY": ["ALLOWED_RECIPIENTS"], "PROPERTY_VALUE": ["dq@example.com"]})
+    if "SHOW TASKS" in sql:
+        return pd.DataFrame({"NAME": ["DQ_DAILY_RUN", "DQ_NOTIFY"], "STATE": ["suspended", "started"],
+                             "SCHEDULE": ["USING CRON 0 6 * * * UTC", None]})
+    if "TASK_HISTORY" in sql:
+        return pd.DataFrame()
+    if "AS T, " in sql:  # Alerting scope picker
+        return pd.DataFrame({"T": ["DB.S.ORDERS"], "S": ["DB.S.*"]})
     r = _results()
     r["RUN_DATE"] = r["RUN_TS"].dt.date
     latest = r[r["RUN_ID"] == "r0"]
@@ -74,10 +98,13 @@ def fake_query(sql, params=None):
 def patch_db(monkeypatch):
     from lib import db
     monkeypatch.setattr(db, "query", fake_query)
+    monkeypatch.setattr(db, "run_uncached", fake_query)
     monkeypatch.setattr(db, "require_framework", lambda: None)
+    monkeypatch.setattr(db, "_in_sis", lambda: False)  # local = admin
 
 
-@pytest.mark.parametrize("page", ["overview", "table_health", "run_history", "rules", "native_dmfs"])
+@pytest.mark.parametrize("page", ["overview", "table_health", "run_history", "rules", "native_dmfs",
+                                  "schema_explorer", "alerting"])
 def test_page_renders(page):
     at = AppTest.from_file(str(APP / "app_pages" / f"{page}.py"), default_timeout=30).run()
     assert not at.exception, [e.value for e in at.exception]
@@ -88,3 +115,22 @@ def test_table_health_drilldown():
     at.run()
     assert not at.exception
     assert any("DQ Score" in m.value for m in at.markdown)
+
+
+def test_read_only_viewer_blocks_writes(monkeypatch):
+    from lib import db
+    monkeypatch.setattr(db, "is_admin", lambda: False)
+    with pytest.raises(PermissionError):
+        db.execute("DELETE FROM X")
+    with pytest.raises(PermissionError):
+        db.execute_many("DELETE FROM X", [()])
+
+
+@pytest.mark.parametrize("page", ["schema_explorer", "alerting", "rules", "table_health"])
+def test_pages_render_read_only(monkeypatch, page):
+    from lib import db
+    monkeypatch.setattr(db, "is_admin", lambda: False)
+    at = AppTest.from_file(str(APP / "app_pages" / f"{page}.py"), default_timeout=30).run()
+    assert not at.exception, [e.value for e in at.exception]
+    if page != "table_health":  # its lock message only appears after a check is selected
+        assert any("read-only" in i.value or "admins" in i.value for i in at.info)

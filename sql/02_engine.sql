@@ -237,17 +237,6 @@ AS
 -- ALTER TASK DQ_DAILY_RUN RESUME;
 
 -- -----------------------------------------------------------------------------
--- Optional: email when a CRITICAL/HIGH check fails. Requires a notification
--- integration (CREATE NOTIFICATION INTEGRATION ... TYPE = EMAIL).
+-- Alerts: see sql/05_alerting.sql (policies, email/webhook, a notify task that
+-- runs right after DQ_DAILY_RUN) and the Alerting page in the app.
 -- -----------------------------------------------------------------------------
--- CREATE OR REPLACE ALERT DQ_FAILURE_ALERT
---   WAREHOUSE = DQ_WH
---   SCHEDULE = 'USING CRON 30 6 * * * UTC'
---   IF (EXISTS (
---     SELECT 1 FROM DQ_FRAMEWORK.CORE.V_LATEST_RESULTS
---     WHERE STATUS <> 'PASS' AND SEVERITY IN ('CRITICAL', 'HIGH')
---       AND RUN_TS > DATEADD('hour', -1, CURRENT_TIMESTAMP())))
---   THEN CALL SYSTEM$SEND_EMAIL('MY_EMAIL_INTEGRATION', 'dq-team@example.com',
---          'Data quality failures detected',
---          'One or more CRITICAL/HIGH data quality checks failed. Open the Data Quality Monitor app for details.');
--- ALTER ALERT DQ_FAILURE_ALERT RESUME;

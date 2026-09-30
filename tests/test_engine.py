@@ -88,3 +88,25 @@ def test_params_as_json_string(eng):
 def test_invalid_rules_raise(eng, r):
     with pytest.raises(ValueError):
         eng.build_sql(r)
+
+
+# The app's preview compiler (app/lib/rules_sql.py) must produce exactly the engine's SQL.
+PARITY_RULES = [
+    rule(),
+    rule(COLUMN_NAME="a, b", RULE_TYPE="UNIQUE"),
+    rule(RULE_TYPE="ACCEPTED_VALUES", RULE_PARAMS={"values": ["A", "O'Brien"]}),
+    rule(RULE_TYPE="RANGE", RULE_PARAMS={"min": 0, "max": 10}),
+    rule(RULE_TYPE="REGEX", RULE_PARAMS={"pattern": r"^\d+$"}),
+    rule(RULE_TYPE="FRESHNESS", RULE_PARAMS={"max_age_hours": 6}),
+    rule(COLUMN_NAME=None, RULE_TYPE="ROW_COUNT", RULE_PARAMS={"min": 1}),
+    rule(RULE_TYPE="REFERENTIAL", RULE_PARAMS={"ref_table": "db.sch.p", "ref_column": "id"}),
+    rule(RULE_TYPE="CUSTOM_SQL", RULE_PARAMS={"failure_condition": "a > b"}),
+    rule(ROW_FILTER="STATUS <> 'X'", RULE_PARAMS='{"min": 0}', RULE_TYPE="RANGE"),
+]
+
+
+@pytest.mark.parametrize("r", PARITY_RULES, ids=lambda r: r["RULE_TYPE"])
+def test_app_preview_compiler_matches_engine(eng, r):
+    sys.path.insert(0, str(ENGINE.parents[1] / "app"))
+    from lib import rules_sql
+    assert rules_sql.build_sql(dict(r)) == eng.build_sql(dict(r))
