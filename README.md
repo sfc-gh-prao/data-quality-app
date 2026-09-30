@@ -80,7 +80,10 @@ and nothing needs installing from PyPI.
 2. **`RUN_DQ_CHECKS()`** turns each rule into a single aggregate SQL query, runs it, and appends one
    row per rule to `DQ_RESULTS`. A broken rule is logged as `ERROR` and doesn't stop the run.
 3. **Views** hold all the scoring logic, so you can reuse it in Snowsight dashboards, other BI tools, or alerts.
-4. **The app** reads the views, and writes only to `DQ_RULES` or by calling the procedure.
+4. **The app** reads the views. It writes only to `DQ_RULES` and the alerting tables, or by calling the
+   procedures, and only for viewers who hold `DQ_ADMIN` (see [Security model](#security-model)).
+5. **Alerts** (optional, `sql/05_alerting.sql`): a `DQ_NOTIFY` task runs right after each scheduled run and
+   sends email or webhook notifications based on your alert policies.
 
 **Scoring.** A check passes when `failed_rows / total_rows × 100 ≤ THRESHOLD_PCT`. The DQ score is the
 severity-weighted share of passing checks: CRITICAL = 8, HIGH = 4, MEDIUM = 2, LOW = 1.
@@ -92,7 +95,7 @@ severity-weighted share of passing checks: CRITICAL = 8, HIGH = 4, MEDIUM = 2, L
 | Requirement | Details |
 |---|---|
 | Snowflake account | Any edition. Streamlit in Snowflake must be available in your region. |
-| Role to install | `SYSADMIN` (databases and warehouse) and `SECURITYADMIN` (roles). `ACCOUNTADMIN` is needed only to grant `EXECUTE TASK`. |
+| Role to install | `SYSADMIN` (databases and warehouse) and `SECURITYADMIN` (roles). `ACCOUNTADMIN` is needed only to grant `EXECUTE TASK` and, if you use alerts, to create notification integrations. |
 | Compute pool | Needed for the container runtime. Most accounts have `SYSTEM_COMPUTE_POOL_CPU`. Check with `SHOW PARAMETERS LIKE 'DEFAULT_STREAMLIT_COMPUTE_POOL' IN ACCOUNT;` |
 | Deploy tool (pick one) | **Snowsight only** (nothing to install), **or** [Snowflake CLI](https://docs.snowflake.com/en/developer-guide/snowflake-cli/installation/installation) v3.14+ |
 
@@ -196,7 +199,7 @@ Use this option to script the deployment.
 3. Create the app on the compute pool:
 
    ```sql
-   LIST @DQ_FRAMEWORK.CORE.DQ_APP_STAGE/app/;     -- expect 18 files
+   LIST @DQ_FRAMEWORK.CORE.DQ_APP_STAGE/app/;     -- expect 21 files
 
    CREATE OR REPLACE STREAMLIT DQ_FRAMEWORK.CORE.DATA_QUALITY_MONITOR
      FROM '@DQ_FRAMEWORK.CORE.DQ_APP_STAGE/app/'
@@ -304,7 +307,15 @@ SHOW STREAMLITS LIKE 'DATA_QUALITY_MONITOR' IN SCHEMA DQ_FRAMEWORK.CORE;
 ```
 
 Then open **Projects » Streamlit » Data Quality Monitor** in Snowsight. With the sample data you should
-see four tables, 30 checks, and a 30-day trend.
+see four tables, 30 checks, and a 30-day trend. The sidebar should show **Viewer: <your user> · admin**. If it
+says **read-only**, your default role doesn't include `DQ_ADMIN` (see [Troubleshooting](#troubleshooting)).
+
+If you installed alerting (Step 6), also check:
+
+```sql
+SHOW TASKS LIKE 'DQ_%' IN SCHEMA DQ_FRAMEWORK.CORE;           -- DQ_DAILY_RUN, DQ_NOTIFY, DQ_ALERT_HISTORY_RETENTION
+CALL DQ_FRAMEWORK.CORE.NOTIFY_DQ_FAILURES(<ALERT_ID>, TRUE);  -- sends a [TEST] notification for one policy
+```
 
 ---
 
@@ -378,7 +389,7 @@ The project is built so that a customer can adopt it with minimal edits.
 |---|---|
 | **Database / schema name** | Find/replace `DQ_FRAMEWORK` (and `CORE`) across `sql/`, then tell the app where to look: set `DQ_FRAMEWORK_SCHEMA = "MY_DB.MY_SCHEMA"` as an environment variable, or edit the default in `app/lib/db.py`. If you deploy with the CLI, pass the new names with `--database` / `--schema` |
 | **Warehouse name** | Find/replace `DQ_WH` in `sql/` and `app/snowflake.yml` |
-| **Role names** | `sql/04_roles.sql` |
+| **Role names** | `sql/04_roles.sql` and `sql/05_alerting.sql`. If you rename `DQ_ADMIN`, also set `DQ_ADMIN_ROLE` (environment variable, or the default in `app/lib/db.py`) so the app knows which role unlocks admin actions |
 | **App title** | `DQ_APP_TITLE` setting, or the default in `app/lib/db.py` |
 | **Colors / fonts / branding** | `app/.streamlit/config.toml` and the color constants at the top of `app/lib/ui.py` |
 | **Score weights** | `V_SEVERITY_WEIGHTS` view in `sql/01_setup.sql` |
@@ -437,7 +448,8 @@ The project is built so that a customer can adopt it with minimal edits.
 | App says **"Data Quality framework not found"** | `01_setup.sql` hasn't run, or the app points at a different location. Check `DQ_FRAMEWORK_SCHEMA`, and confirm the app's owner role has `USAGE` on the database/schema and `SELECT` on the views. |
 | Check shows **ERROR: does not exist or not authorized** | The role running the check can't read that table. Grant `USAGE` + `SELECT` (see [Monitor your own tables](#monitor-your-own-tables)). Scheduled runs use the task owner's role. |
 | Check shows **ERROR: invalid identifier** | The column name or `ROW_FILTER` / `CUSTOM_SQL` expression is wrong. Open the rule in **Table Health » Check SQL** to see the generated query. |
-| **Save / Run buttons fail** for some users | Expected for `DQ_VIEWER`, which is read-only. Grant `DQ_ADMIN` to users who manage rules. |
+| App is **read-only** / buttons are disabled for someone who should be an admin | Admin rights come from the viewer's **default role plus default secondary roles**, not the role selected in Snowsight. Grant `DQ_ADMIN` and either make it part of their default role hierarchy or set `ALTER USER <user> SET DEFAULT_SECONDARY_ROLES = ('ALL');`. The check runs when the app session starts, so reopen the app afterwards. |
+| Sidebar warns **Could not verify your role, so the app is read-only** | The caller's-rights check failed, so the app fails closed. The warning includes the error; reboot the app, and confirm the app runs on the container runtime (compute pool). |
 | **Task never runs** | Run `ALTER TASK ... RESUME`, and make sure the owner role has `EXECUTE TASK` (`04_roles.sql`). Check `SELECT * FROM TABLE(INFORMATION_SCHEMA.TASK_HISTORY()) ORDER BY SCHEDULED_TIME DESC;` |
 | Deploy error mentioning **compute pool** | Use the pool from `SHOW PARAMETERS LIKE 'DEFAULT_STREAMLIT_COMPUTE_POOL' IN ACCOUNT;`, and grant `USAGE` on it to the deploying role. |
 | **Installing dependencies failed because the pyproject.toml file does not exist** | Workspaces requires `app/pyproject.toml`. Upload the one from this repo; it lists only `streamlit` and needs no External Access Integration. |
@@ -454,7 +466,8 @@ The project is built so that a customer can adopt it with minimal edits.
 ## Uninstall
 
 ```sql
--- Removes the app, framework, sample data, warehouse, and roles
+-- Removes the app, framework (including alert policies and history), sample data, warehouse,
+-- the DQ_EMAIL_INTEGRATION notification integration, and roles. Drop any webhook integrations you created yourself.
 -- Review first; this is irreversible beyond Time Travel.
 -- sql/99_uninstall.sql
 ```
@@ -479,6 +492,9 @@ SNOWFLAKE_DEFAULT_CONNECTION_NAME=<your_connection> python tests/live_check.py
 cd app
 SNOWFLAKE_DEFAULT_CONNECTION_NAME=<your_connection> streamlit run streamlit_app.py
 ```
+
+Running locally, there's no Snowsight viewer, so the app treats you as an admin. To check the read-only
+experience, turn on **Preview as read-only viewer** in the sidebar of the deployed app.
 
 The engine's Python lives inside `sql/02_engine.sql`. `tests/test_engine.py` extracts it from that file,
 so the tests always cover exactly what gets deployed. After changing the engine, re-run `02_engine.sql`
