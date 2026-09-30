@@ -12,7 +12,7 @@ APP = pathlib.Path(__file__).resolve().parents[1] / "app"
 sys.path.insert(0, str(APP))
 
 failures = 0
-for page in ["overview", "table_health", "run_history", "rules", "native_dmfs"]:
+for page in ["overview", "table_health", "run_history", "rules", "native_dmfs", "schema_explorer", "alerting"]:
     at = AppTest.from_file(str(APP / "app_pages" / f"{page}.py"), default_timeout=120).run()
     errs = [e.value for e in at.exception] + [e.value for e in at.error]
     kpis = sum(1 for m in at.markdown if "dq-card" in m.value)

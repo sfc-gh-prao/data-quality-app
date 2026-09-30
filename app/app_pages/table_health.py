@@ -33,7 +33,8 @@ with c[3]:
     ui.kpi("Critical", int(h["CRITICAL_ISSUES"]), "not passing", "#B91C1C" if h["CRITICAL_ISSUES"] else ui.GOOD)
 with c[4]:
     st.write("")
-    if st.button("Run checks", help="Run every active check on this table now", icon=":material/play_arrow:", type="primary", use_container_width=True):
+    if st.button("Run checks", help="Run every active check on this table now", icon=":material/play_arrow:", type="primary", use_container_width=True,
+                 disabled=not db.is_admin()):
         with st.spinner(f"Running checks on {table}..."):
             try:
                 r = db.run_checks(table_fqn=table)
@@ -115,9 +116,12 @@ if rows:
                 st.altair_chart((line + thr + pts).properties(height=240), use_container_width=True)
                 st.caption("Red dashed line = threshold. Points above it are failures.")
         with t2:
-            if rule["SAMPLE_SQL"] and st.toggle("Show up to 100 example rows", key=f"sample_{rule['RULE_ID']}"):
+            if not db.is_admin():
+                st.info("Failing rows contain real data values, so they're shown to admins only.", icon=":material/lock:")
+            elif rule["SAMPLE_SQL"] and st.toggle("Show up to 100 example rows", key=f"sample_{rule['RULE_ID']}"):
                 try:
-                    st.dataframe(db.query(rule["SAMPLE_SQL"]), use_container_width=True, hide_index=True)
+                    # Uncached: raw rows must not sit in the app-wide cache shared by all viewers.
+                    st.dataframe(db.run_uncached(rule["SAMPLE_SQL"]), use_container_width=True, hide_index=True)
                 except Exception as e:
                     st.error(f"Could not load sample: {e}")
         with t3:

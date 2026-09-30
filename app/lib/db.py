@@ -30,6 +30,58 @@ if not re.fullmatch(r'[A-Za-z0-9_$."]+', FRAMEWORK):
 
 APP_TITLE = _setting("DQ_APP_TITLE", "Data Quality Monitor")
 
+# Viewers holding this role (via their DEFAULT_ROLE hierarchy) may write: rules, runs, profiling, alerts.
+ADMIN_ROLE = _setting("DQ_ADMIN_ROLE", "DQ_ADMIN")
+if not re.fullmatch(r"[A-Za-z0-9_$]+", ADMIN_ROLE):
+    raise ValueError(f"Invalid DQ_ADMIN_ROLE: {ADMIN_ROLE!r}")
+
+
+def _in_sis() -> bool:
+    return os.path.exists("/snowflake/session/token")
+
+
+def init_viewer():
+    """Resolve who is viewing and whether they are an admin. Call once at the top of the main script.
+
+    The app runs with its owner's rights, so admin status comes from a restricted caller's-rights
+    connection (the viewer's DEFAULT_ROLE). Locally there is no viewer, so the developer is admin.
+    If the check can't run inside Snowflake, the viewer is treated as read-only (fail closed).
+    """
+    if "dq_is_admin" in st.session_state:
+        return
+    if not _in_sis():
+        st.session_state.update(dq_is_admin=True, dq_viewer="local developer", dq_viewer_note=None)
+        return
+    try:
+        conn = st.connection("snowflake-callers-rights")
+        with conn.raw_connection.cursor() as cur:
+            cur.execute("SELECT CURRENT_USER(), CURRENT_ROLE(), IS_ROLE_IN_SESSION(?)", (ADMIN_ROLE,))
+            user, role, is_admin = cur.fetchone()
+        st.session_state.update(dq_is_admin=bool(is_admin), dq_viewer=str(user), dq_viewer_note=None)
+    except Exception as e:
+        st.session_state.update(dq_is_admin=False, dq_viewer="unknown",
+                                dq_viewer_note=f"Could not verify your role, so the app is read-only: {e}")
+
+
+def is_admin() -> bool:
+    if st.session_state.get("dq_preview_readonly"):
+        return False
+    return bool(st.session_state.get("dq_is_admin", not _in_sis()))
+
+
+def _require_admin():
+    if not is_admin():
+        raise PermissionError(f"Read-only: this action requires the {ADMIN_ROLE} role in your default role.")
+
+
+def read_only_notice(what: str = "make changes"):
+    """Show a consistent banner for non-admin viewers. Returns True when the viewer is read-only."""
+    if is_admin():
+        return False
+    st.info(f"You're viewing read-only. Ask for the **{ADMIN_ROLE}** role (as part of your default role) to {what}.",
+            icon=":material/lock:")
+    return True
+
 
 @st.cache_resource(show_spinner=False)
 def get_conn():
@@ -61,14 +113,21 @@ def query(sql: str, params: tuple | None = None) -> pd.DataFrame:
 
 
 def execute(sql: str, params: tuple | None = None) -> pd.DataFrame:
-    """Uncached statement (writes, CALLs). Clears read caches afterwards."""
+    """Uncached statement (writes, CALLs). Admins only. Clears read caches afterwards."""
+    _require_admin()
     df = _run(sql, params)
     st.cache_data.clear()
     return df
 
 
+def run_uncached(sql: str, params: tuple | None = None) -> pd.DataFrame:
+    """Uncached read that leaves caches intact (profiling, previews, status checks)."""
+    return _run(sql, params)
+
+
 def execute_many(sql: str, rows: list[tuple]) -> int:
-    """Run one parameterized statement per row, then clear caches once."""
+    """Run one parameterized statement per row, then clear caches once. Admins only."""
+    _require_admin()
     with get_conn().raw_connection.cursor() as cur:
         for r in rows:
             cur.execute(sql, r)

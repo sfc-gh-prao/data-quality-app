@@ -75,7 +75,8 @@ with tab_cat:
         blob = view[["RULE_NAME", "COLUMN_NAME", "OWNER", "DESCRIPTION"]].fillna("").astype(str).agg(" ".join, axis=1)
         view = view[blob.str.contains(text, case=False, regex=False)]
 
-    editable = ["IS_ACTIVE", "THRESHOLD_PCT", "SEVERITY", "OWNER"]
+    ro = db.read_only_notice("edit, run, or create rules")
+    editable = [] if ro else ["IS_ACTIVE", "THRESHOLD_PCT", "SEVERITY", "OWNER"]
     shown = ["RULE_ID", "IS_ACTIVE", "LAST_STATUS", "RULE_NAME", "TABLE_FQN", "COLUMN_NAME", "RULE_TYPE",
              "RULE_PARAMS", "ROW_FILTER", "THRESHOLD_PCT", "SEVERITY", "DIMENSION", "OWNER"]
     edited = st.data_editor(
@@ -98,7 +99,7 @@ with tab_cat:
     changed = new[(orig.astype(str) != new.astype(str)).any(axis=1)]
 
     b = st.columns([1, 1, 1, 3])
-    if b[0].button(f"Save ({len(changed)})", icon=":material/save:", type="primary", disabled=changed.empty):
+    if b[0].button(f"Save ({len(changed)})", icon=":material/save:", type="primary", disabled=changed.empty or ro):
         n = db.execute_many(
             f"UPDATE {fq('DQ_RULES')} SET IS_ACTIVE = ?, THRESHOLD_PCT = ?, SEVERITY = ?, OWNER = ?, "
             "UPDATED_AT = CURRENT_TIMESTAMP() WHERE RULE_ID = ?",
@@ -109,7 +110,7 @@ with tab_cat:
 
     pick = b[3].selectbox("Rule for actions", view["RULE_ID"].tolist(), index=None, placeholder="Choose a rule to run or delete",
                           format_func=lambda i: f"#{i} — {rules.set_index('RULE_ID').loc[i, 'RULE_NAME']}", label_visibility="collapsed")
-    if b[1].button("Run rule", icon=":material/play_arrow:", disabled=pick is None):
+    if b[1].button("Run rule", icon=":material/play_arrow:", disabled=pick is None or ro):
         with st.spinner("Running..."):
             r = db.run_checks(rule_id=int(pick))
         st.toast(f"{r['PASS']} pass · {r['FAIL']} fail · {r['ERROR']} error")
@@ -122,7 +123,7 @@ with tab_cat:
             db.execute(f"DELETE FROM {fq('DQ_RULES')} WHERE RULE_ID = ?", (rule_id,))
             st.rerun()
 
-    if b[2].button("Delete", icon=":material/delete:", disabled=pick is None):
+    if b[2].button("Delete", icon=":material/delete:", disabled=pick is None or ro):
         confirm_delete(int(pick))
 
 # ---- New rule ------------------------------------------------------------------
@@ -209,7 +210,7 @@ with tab_new:
             problems.append("select a column")
         if not name:
             problems.append("name the rule")
-        if st.button("Create rule", icon=":material/add:", type="primary", disabled=bool(problems)):
+        if st.button("Create rule", icon=":material/add:", type="primary", disabled=bool(problems) or not db.is_admin()):
             db.execute(INSERT_SQL, (name, desc or None, database, schema, table, ",".join(cols) or None, rule_type,
                                     json.dumps(params), row_filter or None, float(threshold), severity, dimension, owner or None))
             st.success(f"Rule **{name}** created.")
@@ -252,6 +253,6 @@ with tab_io:
                 df["DIMENSION"] = df["DIMENSION"].fillna("Validity")
                 df["RULE_TYPE"] = df["RULE_TYPE"].str.upper()
                 st.dataframe(df, hide_index=True, use_container_width=True, height=200)
-                if st.button(f"Import {len(df)} rules", type="primary", icon=":material/upload:"):
+                if st.button(f"Import {len(df)} rules", type="primary", icon=":material/upload:", disabled=not db.is_admin()):
                     n = db.execute_many(INSERT_SQL, [tuple(r) for r in df.itertuples(index=False)])
                     st.success(f"Imported {n} rules.")
