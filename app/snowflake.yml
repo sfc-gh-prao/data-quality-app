@@ -17,12 +17,15 @@ entities:
       - lib/__init__.py
       - lib/db.py
       - lib/ui.py
+      - lib/rules_sql.py
       - app_pages/__init__.py
       - app_pages/overview.py
       - app_pages/table_health.py
       - app_pages/run_history.py
       - app_pages/rules.py
       - app_pages/native_dmfs.py
+      - app_pages/schema_explorer.py
+      - app_pages/alerting.py
       - .streamlit/config.toml
       - static/Inter-Regular.ttf
       - static/Inter-Medium.ttf
